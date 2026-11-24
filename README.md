@@ -21,6 +21,7 @@ assets/css/styles.css design system: tokens, components, responsive, print (boar
 assets/js/engine.js   seeded Monte Carlo engine, pure function, also runs in Node
 assets/js/data.js     simulated data, page guides, glossary — all copy lives here
 assets/js/app.js      routing, state, rendering, interactions
+docs/METHODOLOGY_REVIEW.md  model review vs Open FAIR, SR 11-7, Monte Carlo practice
 legacy/prototype-v1.html  original Claude Design export, kept for reference
 ```
 
@@ -35,6 +36,9 @@ legacy/prototype-v1.html  original Claude Design export, kept for reference
 - **Glossary** (searchable) behind every ⓘ button.
 - Executive view is the default role; practitioner tools stay one click away.
 - Board report prints to PDF exactly as previewed.
+- **Simple / Detailed** switch (Simple by default): hides technical labels and shortens the menu to five essentials.
+- **Where next?** links at the foot of every page.
+- **Methodology review** page, plus the full review in `docs/` — what is model output, what is an assumption.
 
 ## What's inside
 
@@ -42,7 +46,7 @@ legacy/prototype-v1.html  original Claude Design export, kept for reference
   simulation results (live loss exceedance curve), provenance register, decision log,
   challenge ledger, model validation, materiality (8-K) workflow, insurance & control
   ROI, board report builder, integrations, executive briefing, glossary.
-- A real in-browser Monte Carlo engine (seeded Beta-PERT + Poisson, 10k iterations,
+- A real in-browser Monte Carlo engine (seeded Beta-PERT + Poisson, 50k iterations,
   deterministic reproduction) — edit assumptions and watch the curve redraw.
 - A role switcher demonstrating the access model: 1LOD (write/run), 2LOD (read-only +
   independent challenge), MRM (audit + reproducibility tooling), Executive (read-out).

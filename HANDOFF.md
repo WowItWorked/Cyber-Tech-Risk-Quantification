@@ -28,13 +28,14 @@ anywhere in code, seed data, or exports. People are always referenced by functio
 | 5 | Simulation engine + results | Simulation results | Seeded Monte Carlo, LEC, percentile table, live assumption sliders, module breakdown, sensitivity |
 | 6 | Provenance register | Provenance register | Every input: tier (T1/T2/T3), source, owner function, as-of, refresh, automated flags |
 | 7 | Decision log | Decision log | Named decision + forum + date; "no decision, no analysis" enforcement; outcome write-back |
-| 8 | Challenge ledger | Challenge ledger | Append-only, hash-chained 2LOD challenges; 1LOD respond-only; SR 11-7/26-2 effective-challenge evidence |
+| 8 | Challenge ledger | Challenge ledger | Append-only, hash-chained 2LOD challenges; 1LOD respond-only; SR 11-7 effective-challenge evidence |
 | 9 | Validation package | Model validation | Continuously assembled MRM package; frozen snapshots; reproducibility re-execution |
 | 10 | Materiality workflow | Materiality (8-K) | 4-business-day clock, 10-module loss decomposition, threshold determination, sign-off chain |
 | 11 | Insurance & control ROI | Insurance & ROI | Coverage tower vs modeled percentiles, uninsured tail, ΔALE per control investment |
 | 12 | Board report builder | Board report | Section toggles, sealed-snapshot-sourced preview, PDF/PPTX export |
 | 13 | Integration bus | Integrations | GRC (Archer) as system of record; pluggable connectors; BCBS 239 lineage |
 | 15 | Executive briefing | Executive briefing | One-page verdict, key findings with "so what", decisions due with recommendations, confidence in the numbers |
+| 17 | Methodology review | Methodology review | Findings vs Open FAIR / SR 11-7 / Monte Carlo practice, live stability check, link to full review |
 | 16 | Glossary | Glossary | Searchable plain-English definitions; powers every ⓘ popover |
 | 14 | User guide | User guide | In-app introduction (purpose & use), lifecycle overview, and role-based step-by-step guidance for 1LOD / 2LOD / MRM / EXEC |
 
@@ -70,15 +71,22 @@ calibrated judgment; a T3 value may not stand in silently where T1 exists.
 ## 4. Simulation engine spec (reference implementation in the prototype's logic)
 
 - Frequency: λ ~ Beta-PERT(min, ml, max), events/yr ~ Poisson(λ × (1 − controlEffect)).
-- Magnitude per event: common severity shock s ~ PERT(0.7, 1.0, 2.2) × Σ of 7 GL-mapped
-  loss modules, each Beta-PERT (Bernoulli-gated where applicable, e.g. ransom propensity 0.35).
+- Magnitude per event: common severity shock s ~ PERT(0.7, 1.0, sevMax=2.2) × Σ of 7 GL-mapped
+  loss modules, each Beta-PERT (Bernoulli-gated where applicable, e.g. ransomProp 0.35).
+  Recovery controls act on magnitude via `outageCut` (scales interruption + restoration);
+  preventive controls act on frequency via `ctrlEff`. Do not model backup as frequency reduction.
 - Beta-PERT: α = 1 + 4(ml−min)/(max−min), β = 1 + 4(max−ml)/(max−min); Beta via two Gamma
   draws (Marsaglia–Tsang); Poisson via Knuth (small λ).
 - Seeded, deterministic RNG (prototype: mulberry32; production: PCG64 or equivalent, seed
-  persisted per run). 10,000 iterations default; 50,000 for board-cited figures.
+  persisted per run). 50,000 iterations default (10,000 fails the convergence gate; see docs/METHODOLOGY_REVIEW.md).
 - Outputs: mean ALE, P10/50/75/90/95/99, P(≥1 event), P(loss > appetite), loss exceedance
-  curve (log-x $1M–$1.5B), module contribution means, P10→P90 sensitivity swings.
-- Convergence gate: P95 varies <3% across 5 re-seeds, else block sealing.
+  curve (log-x $1M–$1.5B), module contribution means.
+- Sensitivity: one-at-a-time on P95, low/high per input, paired runs (common random numbers).
+  The `T3_DRIVES_MATERIAL` flag is computed from this, never hand-set.
+- Control ROI: ΔALE and ΔP95 from paired runs with/without the control; ROI = ΔALE ÷ annualized cost.
+- Convergence gate: P95 varies <3% across 5 re-seeds, else block sealing (`convergence()`).
+- Open methodology items (heavy tails, Open FAIR secondary-loss gating, cross-scenario aggregation,
+  expert calibration): see `docs/METHODOLOGY_REVIEW.md` §5–6.
 - Report P50 = $0 honestly when the median year has no event — do not smooth it away.
 - Production port: Python (numpy) per the requirements doc; keep engine pure/stateless:
   `f(inputSnapshot, seed, iterations) → outputs` so reproducibility is structural.
@@ -86,7 +94,7 @@ calibrated judgment; a T3 value may not stand in silently where T1 exists.
 ## 5. Non-negotiable architectural requirements
 
 1. **Reproducibility** — any historical analysis re-executes bit-identically from its
-   snapshot (inputs + seed + engine version pinned). This is the SR 11-7/26-2 anchor.
+   snapshot (inputs + seed + engine version pinned). This is the SR 11-7 anchor.
 2. **Immutability** — challenge ledger and sealed snapshots are append-only (event-sourced
    or WORM storage); hash-chain verifiable.
 3. **Decision gate** — analysis creation API requires a decision reference; no orphan runs.
