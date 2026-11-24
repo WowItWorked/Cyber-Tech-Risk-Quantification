@@ -1,7 +1,7 @@
 # Cyber & Technology Risk Quantification Platform — Build Handoff
 
 Handoff package for engineering (Claude Code). The interactive design prototype is
-`index.html` — open it in a browser or via GitHub Pages. Every screen, role, and behavior described
+`index.html` with source in `assets/` (vanilla JS, no build) — open it via GitHub Pages or any static server. Every screen, role, and behavior described
 below is demonstrated there with a working in-browser Monte Carlo engine and simulated data.
 
 **Context.** Proprietary, full-stack CRQ platform for a large US-based bank (~$600B assets,
@@ -34,6 +34,8 @@ anywhere in code, seed data, or exports. People are always referenced by functio
 | 11 | Insurance & control ROI | Insurance & ROI | Coverage tower vs modeled percentiles, uninsured tail, ΔALE per control investment |
 | 12 | Board report builder | Board report | Section toggles, sealed-snapshot-sourced preview, PDF/PPTX export |
 | 13 | Integration bus | Integrations | GRC (Archer) as system of record; pluggable connectors; BCBS 239 lineage |
+| 15 | Executive briefing | Executive briefing | One-page verdict, key findings with "so what", decisions due with recommendations, confidence in the numbers |
+| 16 | Glossary | Glossary | Searchable plain-English definitions; powers every ⓘ popover |
 | 14 | User guide | User guide | In-app introduction (purpose & use), lifecycle overview, and role-based step-by-step guidance for 1LOD / 2LOD / MRM / EXEC |
 
 ## 2. Role & permission matrix (hard requirement)
