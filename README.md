@@ -9,16 +9,39 @@ hash-chained challenge ledger, provenance-tiered inputs).
 
 ## Run it
 
-- Open `index.html` in any modern browser — fully self-contained, works offline.
-- Or serve via GitHub Pages: Settings → Pages → deploy from branch → root. The prototype
-  is a single static file.
+- Serve via GitHub Pages: Settings → Pages → deploy from branch → root. No build step.
+- Or locally: `python3 -m http.server` in the repo root, then open http://localhost:8000.
+  (Opening `index.html` directly from disk also works; fonts fall back to system fonts offline.)
+
+## Structure
+
+```
+index.html            entry point (hero landing + app, hash-routed: #/briefing, #/results …)
+assets/css/styles.css design system: tokens, components, responsive, print (board pack)
+assets/js/engine.js   seeded Monte Carlo engine, pure function, also runs in Node
+assets/js/data.js     simulated data, page guides, glossary — all copy lives here
+assets/js/app.js      routing, state, rendering, interactions
+legacy/prototype-v1.html  original Claude Design export, kept for reference
+```
+
+## Built for executives
+
+- **Hero landing page** explaining the problem, principles, the questions it answers, and roles.
+- **Executive briefing** (new): verdict, what you need to know (with "so what"), decisions due
+  with recommendations, confidence in the numbers, best-value actions.
+- **"About this page" guide** on every screen: what it shows, how to read it, what it helps decide.
+- **Plain language first**: "1-in-20-year loss" leads, with P95 as the secondary label; a dynamic
+  plain-English reading of the live simulation; hover the loss curve to read it in words.
+- **Glossary** (searchable) behind every ⓘ button.
+- Executive view is the default role; practitioner tools stay one click away.
+- Board report prints to PDF exactly as previewed.
 
 ## What's inside
 
-- 13 designed modules: portfolio dashboard, scenario library + detail, analysis wizard,
+- 15 screens plus a landing page: portfolio dashboard, scenario library + detail, analysis wizard,
   simulation results (live loss exceedance curve), provenance register, decision log,
   challenge ledger, model validation, materiality (8-K) workflow, insurance & control
-  ROI, board report builder, integrations.
+  ROI, board report builder, integrations, executive briefing, glossary.
 - A real in-browser Monte Carlo engine (seeded Beta-PERT + Poisson, 10k iterations,
   deterministic reproduction) — edit assumptions and watch the curve redraw.
 - A role switcher demonstrating the access model: 1LOD (write/run), 2LOD (read-only +
