@@ -31,7 +31,7 @@
     route: "home", param: null,
     role: store.get("role", "exec"),
     inputs: Object.assign({}, E.DEFAULT_INPUTS),
-    iters: 10000, appetite: 250,
+    iters: E.DEFAULT_ITERS, appetite: 250, simple: store.get("simple", true),
     R: null, Rprog: null, sealed: null,
     challenges: D.challenges.slice(),
     chDraft: "", chSev: "Medium", chTarget: "Ransom payment propensity (T3)",
@@ -43,9 +43,24 @@
   function compute() {
     const opts = { iterations: S.iters, appetite: S.appetite };
     S.R = E.run(S.inputs, opts);
-    S.Rprog = E.run(Object.assign({}, S.inputs, { ctrlEff: Math.max(S.inputs.ctrlEff, D.programCtrlEff) }), opts);
+    S.Rprog = E.run(applyEffect(S.inputs, D.program), opts);
+    S.sens = E.sensitivity(S.inputs, { appetite: S.appetite });
+    const ro = { iterations: S.iters, appetite: S.appetite }, base20 = S.R;
+    S.roi = D.roi.map(c => {
+      if (c.staticDale != null) return Object.assign({}, c, { dale: c.staticDale, dP95: null, roi: c.staticDale / (c.cost / 3), pay: c.cost / c.staticDale, live: false });
+      const r = E.run(applyEffect(S.inputs, c.effect), ro), dale = base20.mean - r.mean;
+      return Object.assign({}, c, { dale, dP95: base20.pcts.p95 - r.pcts.p95, roi: dale / (c.cost / 3), pay: dale > 0 ? c.cost / dale : Infinity, live: true });
+    });
   }
-  S.sealed = E.run(E.DEFAULT_INPUTS, { iterations: 10000, appetite: 250 });
+  function applyEffect(inp, eff) {
+    const o = Object.assign({}, inp);
+    if (eff.ctrlEff) o.ctrlEff = Math.min(95, inp.ctrlEff + eff.ctrlEff);
+    if (eff.outageCut) o.outageCut = Math.min(90, inp.outageCut + eff.outageCut);
+    return o;
+  }
+  let convCache = null;
+  function conv() { if (!convCache) convCache = { c10: E.convergence(E.DEFAULT_INPUTS, { iterations: 10000 }), c50: E.convergence(E.DEFAULT_INPUTS, { iterations: 50000 }) }; return convCache; }
+  S.sealed = E.run(E.DEFAULT_INPUTS, { appetite: 250 });
   compute();
 
   /* ================= small components ================= */
@@ -102,7 +117,13 @@
     const scen = D.scenarios.map(s => (s.live ? Object.assign({}, s, { mean: R.mean, p95 }) : s));
     const largest = scen.filter(s => !s.live).sort((a, b) => b.p95 - a.p95)[0];
     return { R, P, p95, p90: R.pcts.p90, mean: R.mean, gap, gapHas: gap > 2, agg, aggU, scen, largest, app: S.appetite,
-      progGap: Math.max(0, P.pcts.p95 - D.tower) };
+      progGap: Math.max(0, P.pcts.p95 - D.tower),
+      bk: S.roi[0], edr: S.roi[1], branch: S.roi[3],
+      bestRoi: S.roi.filter(r => r.live).slice().sort((a, b) => b.roi - a.roi)[0],
+      bestTail: S.roi.filter(r => r.live).slice().sort((a, b) => b.dP95 - a.dP95)[0],
+      flagT3: S.sens.find(x => x.tier === "T3" && x.relHalf > 0.10),
+      // honest range for citing the ransomware bad year: spread of the two most influential inputs
+      range: { lo: Math.min(...S.sens.slice(0, 2).map(x => Math.min(x.lo, x.hi))), hi: Math.max(...S.sens.slice(0, 2).map(x => Math.max(x.lo, x.hi))) } };
   }
 
   /* ================= charts ================= */
@@ -162,21 +183,32 @@
     const role = D.roles[S.role];
     const active = S.route === "detail" ? "scenarios" : S.route;
     let hidden = 0;
-    const groups = D.nav.map(g => {
-      const items = g.items.filter(it => { const ok = !it[4] || it[4].includes(S.role); if (!ok) hidden++; return ok; });
-      if (!items.length) return "";
-      return `<div class="nav-group"><div class="nav-label">${g.label}</div>${items.map(([id, label, hint, d]) => `
+    const navItem = ([id, label, hint, d]) => `
         <a href="#/${id}" class="nav-item${active === id ? " active" : ""}"${active === id ? ' aria-current="page"' : ""}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${d}"/></svg>
           <span class="nl"><b>${label}</b><small>${hint}</small></span>
-        </a>`).join("")}</div>`;
-    }).join("");
+        </a>`;
+    const allowed = it => { const ok = !it[4] || it[4].includes(S.role); if (!ok) hidden++; return ok; };
+    let groups;
+    if (S.simple) {
+      const all = []; D.nav.forEach(g => g.items.forEach(it => all.push(it)));
+      const ess = ESSENTIALS.map(id => all.find(it => it[0] === id));
+      const more = D.nav.map(g => { const items = g.items.filter(it => !ESSENTIALS.includes(it[0])).filter(allowed); return items.length ? `<div class="nav-group"><div class="nav-label">${g.label}</div>${items.map(navItem).join("")}</div>` : ""; }).join("");
+      const moreOpen = !ESSENTIALS.includes(active);
+      groups = `<div class="nav-group"><div class="nav-label">Essentials</div>${ess.map(navItem).join("")}</div>
+        <details class="nav-more"${moreOpen ? " open" : ""}><summary>More pages</summary>${more}</details>`;
+    } else {
+      groups = D.nav.map(g => {
+        const items = g.items.filter(allowed);
+        return items.length ? `<div class="nav-group"><div class="nav-label">${g.label}</div>${items.map(navItem).join("")}</div>` : "";
+      }).join("");
+    }
     const hint = hidden ? `<p class="nav-hint">${hidden} practitioner tools are hidden in this view. <button type="button" data-action="role" data-role="1lod">Switch to 1st line</button> to see them.</p>` : "";
     const strip = { neutral: ["#F0F1F3", "#3D454C", "#D7DBDF"], accent: ["#E6F2F4", "#0C5560", "#BFDEE3"], warn: ["#FBF1DD", "#7A5206", "#ECD3A0"], info: ["#E8F0F6", "#2E5A78", "#C9DCE9"] }[role.tone];
     const roleBtns = ["exec", "1lod", "2lod", "mrm"].map(id => `<button type="button" data-action="role" data-role="${id}" aria-pressed="${S.role === id}" title="${esc(D.roles[id].desc)}">${D.roles[id].short}</button>`).join("");
 
     return `<a class="skip-link" href="#main">Skip to content</a>
-    <div class="app${S.navOpen ? " nav-open" : ""}">
+    <div class="app${S.navOpen ? " nav-open" : ""}${S.simple ? " simple" : ""}">
       <aside class="sidebar" aria-label="Main navigation">
         <a href="#/" class="brand" title="Back to the home page">
           <span class="brand-mark"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4v16h16M6 20c2.5 0 3.5-11 6-11s3.5 11 6 11"/></svg></span>
@@ -196,12 +228,72 @@
             <h1 class="page-title">${esc(D.titles[S.route] || "")}</h1>
           </div>
           <span class="sim-pill" title="This is a design prototype. All figures are simulated.">Simulated data · prototype</span>
+          <div class="role-switch"><label>Detail</label><div class="seg" role="group" aria-label="Level of detail"><button type="button" data-action="simple" data-v="1" aria-pressed="${S.simple}" title="Plain view: hides technical labels and shortens the menu">Simple</button><button type="button" data-action="simple" data-v="0" aria-pressed="${!S.simple}" title="Shows model IDs, seeds and technical labels">Detailed</button></div></div>
           <div class="role-switch"><label>Viewing as ${info("lod", "Who can do what")}</label><div class="seg" role="group" aria-label="Choose a role view">${roleBtns}</div></div>
         </header>
-        <div class="role-strip" style="background:${strip[0]};color:${strip[1]};border-color:${strip[2]}"><b>${role.name}</b><span>${role.strip}</span></div>
-        <main id="main" class="content" tabindex="-1">${content}</main>
+        ${S.simple && S.role === "exec" ? "" : `<div class="role-strip" style="background:${strip[0]};color:${strip[1]};border-color:${strip[2]}"><b>${role.name}</b><span>${role.strip}</span></div>`}
+        <main id="main" class="content" tabindex="-1">${content}${whereNext()}</main>
       </div>
     </div>`;
+  }
+
+  const ESSENTIALS = ["briefing", "dashboard", "insurance", "board", "materiality"];
+  const NEXT = {
+    briefing: [["insurance", "Insurance & investments", "What closes the gap"], ["board", "Board report", "Print the committee pack"]],
+    dashboard: [["briefing", "Executive briefing", "The one-page answer"], ["scenarios", "Risk scenarios", "Each risk in plain English"]],
+    insurance: [["board", "Board report", "Put it in front of the committee"], ["results", "Ransomware deep-dive", "Where these numbers come from"]],
+    board: [["briefing", "Executive briefing", "Back to the summary"], ["methodology", "Methodology review", "Can the maths be trusted?"]],
+    materiality: [["briefing", "Executive briefing", "Back to the summary"], ["glossary", "Glossary", "Look up a term"]],
+    results: [["insurance", "Insurance & investments", "What it means for cover and spend"], ["methodology", "Methodology review", "How the model was tested"]],
+    scenarios: [["dashboard", "Risk dashboard", "All risks against their limits"]],
+    detail: [["scenarios", "All risk scenarios", "Back to the list"], ["briefing", "Executive briefing", "The one-page answer"]],
+    decisions: [["briefing", "Executive briefing", "Recommendations for each decision"]],
+    methodology: [["briefing", "Executive briefing", "Back to the summary"], ["glossary", "Glossary", "Plain-English terms"]],
+    glossary: [["briefing", "Executive briefing", "Start here"]],
+    guide: [["briefing", "Executive briefing", "Start here"]]
+  };
+  function whereNext() {
+    const n = (NEXT[S.route] || []).filter(x => navAllowed(x[0], S.role));
+    if (!n.length) return "";
+    return `<nav class="where-next no-print" aria-label="Where next"><span class="wn-label">Where next?</span>${n.map(([r, t, h]) => `<a href="#/${r}" class="wn"><b>${t} \u2192</b><small>${h}</small></a>`).join("")}</nav>`;
+  }
+
+  /* ================= METHODOLOGY REVIEW ================= */
+  function pageMethodology() {
+    const f = fig(), c = conv(), sv = S.sens;
+    const prop = sv.find(x => x.key === "ransomProp");
+    const findings = [
+      ["Sampling maths (Beta-PERT, Poisson, gamma, percentiles)", "Correct. Matches standard algorithms; the chance of a costly attack (" + pct(f.R.pAny, 1) + ") matches the closed-form value.", "ok", "Sound"],
+      ["Reproducibility", "Same inputs and seed reproduce every figure exactly; verified live on the validation page.", "ok", "Sound"],
+      ["Run size", `10,000 simulated years varied by ${pct(c.c10.spread, 1)} across seeds, failing the 3% stability test. Now 50,000 (${pct(c.c50.spread, 1)}).`, "ok", "Fixed"],
+      ["Sensitivity (\u201cwhat moves the answer\u201d)", "Measured the average year using an unexplained constant, not the bad year. Rebuilt: each input is swung and the model re-run on the 1-in-20-year loss.", "ok", "Fixed"],
+      ["Ransom-payment likelihood claim", `Said to move the bad year by over 10%. Re-tested: \u00b1${pct(prop.relHalf, 1)}. Challenge CH-0007 answered; the severity multiplier is flagged instead.`, "ok", "Fixed"],
+      ["Control returns (ROI)", "Were typed in; backup\u2019s claimed saving ($10.9M/yr) was nearly impossible in this model. Now computed by paired model runs; backup modeled as faster recovery, not fewer attacks.", "ok", "Fixed"],
+      ["Portfolio total ($612M)", "An input, not model output: only ransomware is simulated and risks are not yet combined.", "warn", "Disclosed"],
+      ["Capped loss ranges", "Every range has a hard maximum, so extreme years are likely understated. Cyber losses are usually modeled with uncapped (heavy-tailed) distributions.", "warn", "Open"],
+      ["Secondary losses (Open FAIR)", "Customer, legal and notification costs apply to every incident; Open FAIR applies them only when outside parties react, so they are overstated.", "warn", "Open"],
+      ["Expert-judgment inputs", "Severity multiplier and control effects rest on workshop judgment with no calibration record.", "warn", "Open"]
+    ];
+    const tone = { Sound: "ok", Fixed: "accent", Disclosed: "warn", Open: "danger" };
+    return `${pageGuide("methodology")}
+      <div class="verdict on-dark" style="grid-template-columns:1fr">
+        <div><div class="verdict-kicker">Review verdict</div>
+        <h2>The model\u2019s maths is sound, and the ransomware figures are fit for decisions as ranges. The portfolio total is not model output yet.</h2>
+        <p>Reviewed against Open FAIR, US model-risk guidance (SR 11-7) and standard Monte Carlo practice. Six problems were found and fixed; four limitations remain and are disclosed below.</p></div>
+      </div>
+      <div class="card section"><div class="card-head"><span class="card-title">Findings</span></div>
+        <div class="table-wrap"><table class="tbl"><thead><tr><th>Area</th><th>What we found</th><th>Status</th></tr></thead>
+        <tbody>${findings.map(x => `<tr><td class="t-main">${x[0]}</td><td class="small">${x[1]}</td><td><span class="chip tone-${tone[x[3]]}">${x[3]}</span></td></tr>`).join("")}</tbody></table></div>
+      </div>
+      <div class="grid g-2 section">
+        <div class="card"><div class="card-head"><span class="card-title">What it means for you</span></div>
+          <ul class="checks"><li>Use the ransomware bad year as a range: about ${fm(f.range.lo)}\u2013${fm(f.range.hi)}.</li><li>Treat the $612M portfolio figure as an estimate, not a model result.</li><li>Control returns are computed, but depend on assumed control effects.</li><li>Extreme (1-in-100) years are probably understated until the tails are fixed.</li></ul></div>
+        <div class="card"><div class="card-head"><span class="card-title">Stability check ${info("convergence")}</span></div>
+          ${[c.c10, c.c50].map(x => `<div class="kv"><span>${x.iterations.toLocaleString()} simulated years</span><span>${pct(x.spread, 1)} ${x.pass ? '<span class="chip tone-ok">passes</span>' : '<span class="chip tone-danger">fails</span>'}</span></div>`).join("")}
+          <p class="xs muted" style="margin-top:8px">The bad-year loss re-run with five seeds must vary by under 3%.</p></div>
+      </div>
+      <div class="card"><div class="card-head"><span class="card-title">Full technical review</span></div>
+        <p class="small">The complete review, with test method, numbers and recommended fixes for model validators, is in the repository: <a href="${D.reviewUrl}" target="_blank" rel="noopener">docs/METHODOLOGY_REVIEW.md</a>.</p></div>`;
   }
 
   function restricted(route) {
@@ -270,7 +362,7 @@
         <p class="l-sub">Traditional risk reporting ranks risks by color. Boards are left to guess how big “high” is, whether insurance is enough, and which investment matters most. CTRQ answers in the same language as every other business decision: money, likelihood and return.</p>
         <div class="problem">
           <div class="pc old"><h3>Before</h3><p class="quote">“Ransomware risk is high and trending up.”</p><p class="muted">Is that within tolerance? Is $8M of backups worth it? Nobody can say.</p><div class="heat" aria-hidden="true">${heat}</div></div>
-          <div class="pc new"><h3>With CTRQ</h3><p class="quote">“A bad ransomware year could cost ${fm(f.p95)}. That is ${pct(f.p95 / f.app)} of our limit, and ${fm(f.gap)} more than insurance pays. Backups worth $8.4M would avoid $10.9M a year.”</p><p style="color:rgba(255,255,255,0.7)">Every figure links to its source, its reviewer and the decision it informs.</p></div>
+          <div class="pc new"><h3>With CTRQ</h3><p class="quote">“A bad ransomware year could cost ${fm(f.p95)}. That is ${pct(f.p95 / f.app)} of our limit, and ${fm(f.gap)} more than insurance pays. Faster-recovery backups costing $8.4M would cut that bad year by ${fm(f.bk.dP95)}.”</p><p style="color:rgba(255,255,255,0.7)">Every figure links to its source, its reviewer and the decision it informs.</p></div>
         </div>
       </section>
 
@@ -330,6 +422,7 @@
     const badge = { ok: ["ok", "Within limit"], warn: ["", "Near limit"], danger: ["danger", "Over limit"] }[tone];
     const core = f.largest;
     const ch = S.challenges.find(c => c.status === "Open");
+    const ft = f.flagT3;
 
     const know = [
       { tone: "warn", n: "1", title: `Headroom is thin: ${fm(head)} left of a ${fm(f.agg.appetite)} limit`,
@@ -343,26 +436,26 @@
           body: `A 1-in-20 ransomware year is modeled at ${fm(f.p95)}. Cyber insurance pays up to $${D.tower}M, so the bank would absorb the rest.`,
           so: `The renewal (D-2026-014, Aug 2026) should choose explicitly: buy more cover, or fund controls that shrink the loss. The proposed backup + EDR program would bring the bad year to about ${fm(f.P.pcts.p95)}${f.progGap > 2 ? `, still ${fm(f.progGap)} above the tower` : ", inside the current tower"}.`, link: go("insurance", "See coverage and options →") }
         : { tone: "ok", n: "3", title: "Insurance covers a bad ransomware year", body: `A 1-in-20 ransomware year is modeled at ${fm(f.p95)}, inside the $${D.tower}M tower.`, so: "The renewal can focus on price and terms rather than limit.", link: go("insurance", "See coverage →") },
-      ch ? { tone: "info", n: "4", title: "One key ransomware assumption is under independent challenge",
-        body: "The 35% likelihood that the bank would pay a ransom rests on expert judgment, and it moves the bad-year figure by more than 10%. The second line has an open, high-severity challenge (" + ch.id + ").",
-        so: "Until it closes, cite the ransomware figure as a range rather than a point.", link: S.role === "exec" ? go("glossary", "What is a challenge? →") : go("challenges", "Read the challenge →") } : null
+      ft ? { tone: "info", n: "4", title: "One expert-judgment assumption materially moves the ransomware figure",
+        body: `${ft.name} rests on expert judgment, and swinging it across its plausible range moves the bad-year figure by \u00b1${pct(ft.relHalf, 1)} (${fm(ft.lo)} to ${fm(ft.hi)}). The earlier concern about ransom-payment likelihood was re-tested: it moves the figure by under 3%.`,
+        so: `Cite the ransomware bad year as a range (${fm(f.range.lo)}\u2013${fm(f.range.hi)}), not a point, until this input is calibrated with data.`, link: go("methodology", "How the numbers were tested \u2192") } : null
     ].filter(Boolean);
     const toneIcon = { warn: "!", danger: "!", info: "i", ok: "✓" };
     const knowHTML = know.map(k => `<div class="know"><span class="know-n tone-${k.tone}">${k.n}</span><div><h4>${k.title}</h4><p>${k.body}</p><div class="so"><b>So what:</b> ${k.so}</div><div class="meta">${k.link}</div></div></div>`).join("");
 
     const decs = [
       { d: "D-2026-014", says: f.gapHas ? `A bad ransomware year (${fm(f.p95)}) exceeds the $${D.tower}M tower by ${fm(f.gap)}.` : `A bad ransomware year (${fm(f.p95)}) sits inside the $${D.tower}M tower.`,
-        rec: f.gapHas ? `Price an extra excess layer of about ${fm(Math.ceil(f.gap / 5) * 5)} and compare it with funding immutable backup ($8.4M, 3.9× return), which also shrinks the gap. Decide explicitly rather than accept the gap by default.` : "Renew at current limit; negotiate on price and terms." },
+        rec: f.gapHas ? `Compare the premium for about ${fm(Math.ceil(f.gap / 5) * 5)} more cover with funding backup + EDR ($14.6M), which the model says brings a bad year to ${fm(f.P.pcts.p95)}${f.progGap > 2 ? "" : ", inside the current limit"}. Decide explicitly rather than accept the gap by default.` : "Renew at current limit; negotiate on price and terms." },
       { d: "D-2026-025", says: "In the incident rehearsal, the estimate (typical $38M, severe $128M) straddles the proposed $92M threshold.",
         rec: "Ratify $92M, with the qualitative factors (payments criticality, customer count) written into the policy so borderline cases escalate." },
-      { d: "D-2026-019", says: "The branch-estate EDR tranche returns $0.90 of avoided loss per $4.80 spent (0.6×): it does not pay back.",
-        rec: "Defer, and redirect funds to immutable backup and recovery automation (3.9×)." },
+      { d: "D-2026-019", says: `The branch-estate EDR tranche avoids about ${fm(f.branch.dale)} a year for $4.8M (${f.branch.roi.toFixed(1)}\u00d7 return): it does not pay back.`,
+        rec: `Defer, and redirect funds to immutable backup, which cuts the bad-year loss by ${fm(f.bk.dP95)}.` },
       { d: "D-2026-021", says: `Core conversion is the largest risk on the book: ${fm(core.p95)} in a bad year (draft), above the ${fm(f.app)} ceiling.`,
         rec: "Make a validated analysis, with the bad-year loss under the ceiling, an explicit go criterion." }
     ].map(x => {
       const d = D.decisions.find(y => y.id === x.d);
       return `<div class="decision-card">
-        <div><h4>${esc(d.title)}</h4><div class="dmeta">${d.id} · ${esc(d.forum)} · ${chip(d.status, true)}</div></div>
+        <div><h4>${esc(d.title)}</h4><div class="dmeta"><span class="tech">${d.id} · </span>${esc(d.forum)} · ${chip(d.status, true)}</div></div>
         <div class="due"><span class="xs muted">Due</span><b>${d.due}</b></div>
         <div class="dbody"><div class="dbox"><h5>What the analysis says</h5>${x.says}</div><div class="dbox rec"><h5>Recommended</h5>${x.rec}</div></div>
       </div>`;
@@ -374,9 +467,9 @@
         <div class="conf-item"><div class="ci-top">Model review ${info("validation")}</div><div class="ci-val">Approved, with conditions</div><div class="ci-note">Back-testing completes Q2 2027.</div></div>
         <div class="conf-item"><div class="ci-top">Strength of evidence ${info("tiers")}</div><div class="ci-val">${tiers[0]}% own records</div><div class="mix" style="margin:6px 0 4px"><span style="width:${tiers[0]}%"></span><span style="width:${tiers[1]}%"></span><span style="width:${tiers[2]}%"></span></div><div class="ci-note">${tiers[1]}% industry data · ${tiers[2]}% expert judgment</div></div>
         <div class="conf-item"><div class="ci-top">Freshness ${info("prov")}</div><div class="ci-val">3 inputs overdue</div><div class="ci-note">Attrition, notification cost, conversion defect rate.</div></div>
-        <div class="conf-item"><div class="ci-top">Open challenges ${info("challenge")}</div><div class="ci-val">${S.challenges.filter(c => c.status === "Open").length} open</div><div class="ci-note">${ch ? "High severity, on a ransomware input." : "None outstanding."}</div></div>
+        <div class="conf-item"><div class="ci-top">Open challenges ${info("challenge")}</div><div class="ci-val">${S.challenges.filter(c => c.status === "Open").length} open</div><div class="ci-note">${ch ? "Awaiting response from the 1st line." : "All challenges answered."}</div></div>
       </div>
-      <div class="card-foot"><b style="color:var(--text)">Overall: moderate confidence.</b> Reviewed figures are fit for decisions. Treat draft and challenged figures as ranges, and say so when citing them.</div>`;
+      <div class="card-foot"><b style="color:var(--text)">Overall: moderate confidence.</b> The ransomware model is fit for decisions; cite its bad year as a range. The portfolio total is an illustrative input, not yet model output. ${go("methodology", "Read the methodology review \u2192")}</div>`;
 
     const recs = recsRows(f).slice(0, 4).map(r => `<div class="tl-item" style="grid-template-columns:30px 1fr"><span class="mono" style="color:var(--accent);font-weight:700">${r.n}</span><span><b>${r.title}</b><div class="mono xs" style="color:var(--accent);font-weight:600;margin:2px 0">${r.eff}</div><div class="small muted">${r.why}</div></span></div>`).join("");
 
@@ -387,16 +480,16 @@
         <div>
           <div class="verdict-kicker">The bottom line</div>
           <h2>Technology risk is within the board’s limit, but close to it, and the largest risk is not yet reviewed.</h2>
-          <p>A bad year across all scenarios is modeled at <b>${fm(f.agg.p95)}</b> against a <b>${fm(f.agg.appetite)}</b> appetite. Four decisions over the next quarter can widen that margin.</p>
+          <p>A bad year across all scenarios is estimated at <b>${fm(f.agg.p95)}</b> against a <b>${fm(f.agg.appetite)}</b> appetite. Four decisions over the next quarter can widen that margin.</p><p style="font-size:13px;opacity:.75">Only ransomware is fully simulated today; the portfolio total is an illustrative input until combining risks is built.</p>
         </div>
         <div class="verdict-gauge"><div class="big">${pct(f.aggU)}</div><div class="lab">of the board’s limit used ${info("appetite")}</div>${meter(f.aggU, tone)}</div>
       </section>
 
       <div class="grid g-auto section">
-        <div class="card kpi"><span class="kpi-label">A bad year could cost ${info("p95")}</span><span class="kpi-value">${fm(f.agg.p95)}</span><span class="kpi-note">1-in-20-year loss, all risks combined</span><span class="kpi-tech">Aggregate P95</span></div>
-        <div class="card kpi"><span class="kpi-label">Headroom left ${info("appetite")}</span><span class="kpi-value">${fm(head)}</span><span class="kpi-note">of the ${fm(f.agg.appetite)} board appetite</span><span class="kpi-tech">${pct(f.aggU)} utilization</span></div>
-        <div class="card kpi"><span class="kpi-label">Average cost per year ${info("ale")}</span><span class="kpi-value">${fm(f.agg.mean)}</span><span class="kpi-note">The budgeting figure; most years are quieter</span><span class="kpi-tech">Mean ALE</span></div>
-        <div class="card kpi"><span class="kpi-label">Uninsured ransomware loss ${info("tower")}</span><span class="kpi-value" style="color:${f.gapHas ? "var(--critical)" : "var(--ok)"}">${fm(f.gap)}</span><span class="kpi-note">in a bad year, above the $${D.tower}M policy limit</span><span class="kpi-tech">P95 − tower top</span></div>
+        <div class="card kpi"><span class="kpi-label">A bad year could cost ${info("p95")}</span><span class="kpi-value">${fm(f.agg.p95)}</span><span class="kpi-note">1-in-20-year loss, all risks combined (illustrative)</span><span class="kpi-tech tech">Aggregate P95 · input, not modeled</span></div>
+        <div class="card kpi"><span class="kpi-label">Headroom left ${info("appetite")}</span><span class="kpi-value">${fm(head)}</span><span class="kpi-note">of the ${fm(f.agg.appetite)} board appetite</span><span class="kpi-tech tech">${pct(f.aggU)} utilization</span></div>
+        <div class="card kpi"><span class="kpi-label">Average cost per year ${info("ale")}</span><span class="kpi-value">${fm(f.agg.mean)}</span><span class="kpi-note">The budgeting figure; most years are quieter</span><span class="kpi-tech tech">Mean ALE</span></div>
+        <div class="card kpi"><span class="kpi-label">Uninsured ransomware loss ${info("tower")}</span><span class="kpi-value" style="color:${f.gapHas ? "var(--critical)" : "var(--ok)"}">${fm(f.gap)}</span><span class="kpi-note">in a bad year, above the $${D.tower}M policy limit</span><span class="kpi-tech tech">P95 − tower top</span></div>
       </div>
 
       <h2 class="section-title">What you need to know</h2>
@@ -414,13 +507,15 @@
   }
 
   function recsRows(f) {
-    return [
-      { n: "01", title: "Fund immutable backup & recovery automation", why: "Largest risk reduction per dollar in the portfolio; shortens ransomware outages, the biggest cost driver.", eff: "−$10.9M/yr · 3.9×" },
-      { n: "02", title: f.gapHas ? "Close the insurance gap, or formally accept it" : "Renew insurance at the current limit", why: "Renewal decision D-2026-014 is due Aug 2026; the gap is priced by the live model.", eff: f.gapHas ? fm(f.gap) + " uninsured" : "covered" },
-      { n: "03", title: "Gate core conversion on a validated analysis", why: `The largest risk on the book (${fm(f.largest.p95)}, draft) is above the single-risk ceiling.`, eff: "D-2026-021 · Oct" },
-      { n: "04", title: "Resolve the open ransomware challenge (CH-0007)", why: "Corroborate the ransom-payment likelihood with industry data, or disclose the range.", eff: "restores full status" },
-      { n: "05", title: "Refresh the three overdue inputs", why: "Attrition, notification cost and defect rate are past their refresh date ahead of Q3 runs.", eff: "keeps evidence current" }
-    ];
+    const rows = [];
+    const bt = f.bestTail, br = f.bestRoi;
+    rows.push({ title: `Fund ${bt.short}`, why: "Biggest modeled cut to a bad ransomware year, which is what the insurance decision turns on.", eff: `\u2212${fm(bt.dP95)} off the bad year \u00b7 ${bt.roi.toFixed(1)}\u00d7` });
+    if (br !== bt) rows.push({ title: `Complete ${br.short}`, why: "Best return on average losses: the most avoided loss per dollar.", eff: `\u2212${fm(br.dale)}/yr \u00b7 ${br.roi.toFixed(1)}\u00d7` });
+    rows.push({ title: f.gapHas ? "Close the insurance gap, or formally accept it" : "Renew insurance at the current limit", why: `Renewal D-2026-014 is due Aug 2026. Backup + EDR together bring a bad year to ${fm(f.P.pcts.p95)}.`, eff: f.gapHas ? fm(f.gap) + " uninsured" : "covered" });
+    rows.push({ title: "Gate core conversion on a validated analysis", why: `The largest risk on the book (${fm(f.largest.p95)}, draft) is above the single-risk ceiling.`, eff: "D-2026-021 \u00b7 Oct" });
+    if (f.flagT3) rows.push({ title: `Calibrate the ${f.flagT3.name.toLowerCase()}`, why: "The expert-judgment input that moves the bad-year figure most. Replace judgment with loss data.", eff: `\u00b1${pct(f.flagT3.relHalf, 0)} on the bad year` });
+    rows.push({ title: "Refresh the three overdue inputs", why: "Attrition, notification cost and defect rate are past their refresh date ahead of Q3 runs.", eff: "keeps evidence current" });
+    return rows.map((r, i) => Object.assign({ n: String(i + 1).padStart(2, "0") }, r));
   }
 
   /* ================= DASHBOARD ================= */
@@ -446,10 +541,10 @@
     return `${pageGuide("dashboard")}
       <div class="page-intro"><p>What a severe year could cost, in dollars, against the limits the board ratified.</p><span class="asof">As of ${D.asOf} · snapshot ${esc(S.R.snap)}</span></div>
       <div class="grid g-auto section" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">
-        <div class="card card-dark kpi on-dark"><span class="kpi-label">All risks, bad year ${info("p95")}</span><span class="kpi-value">${fm(f.agg.p95)}</span><span class="kpi-note">vs ${fm(f.agg.appetite)} appetite · <b style="color:#F0C060">${pct(f.aggU)} used</b></span><div style="margin-top:8px">${meter(f.aggU, utilTone(f.aggU))}</div></div>
+        <div class="card card-dark kpi on-dark"><span class="kpi-label">All risks, bad year ${info("p95")}</span><span class="kpi-value">${fm(f.agg.p95)}</span><span class="kpi-note">vs ${fm(f.agg.appetite)} appetite · <b style="color:#F0C060">${pct(f.aggU)} used</b> · illustrative</span><div style="margin-top:8px">${meter(f.aggU, utilTone(f.aggU))}</div></div>
         <div class="card kpi"><span class="kpi-label">Average cost per year ${info("ale")}</span><span class="kpi-value">${fm(f.agg.mean)}</span><span class="kpi-note">long-run average, reviewed runs</span></div>
         <div class="card kpi"><span class="kpi-label">Risks fully reviewed ${info("validation")}</span><span class="kpi-value">${nValid} <small>of ${D.scenarios.length}</small></span><span class="kpi-note">the rest are draft or not yet modeled</span></div>
-        <div class="card kpi"><span class="kpi-label">Open challenges ${info("challenge")}</span><span class="kpi-value" style="color:var(--warn)">${S.challenges.filter(c => c.status === "Open").length}</span><span class="kpi-note">CH-0007 · high severity</span></div>
+        <div class="card kpi"><span class="kpi-label">Open challenges ${info("challenge")}</span><span class="kpi-value" style="color:var(--warn)">${S.challenges.filter(c => c.status === "Open").length}</span><span class="kpi-note">${S.challenges.some(c => c.status === "Open") ? "awaiting response" : "all answered"}</span></div>
         <div class="card kpi"><span class="kpi-label">Inputs overdue ${info("prov")}</span><span class="kpi-value" style="color:var(--danger)">3</span><span class="kpi-note">past their refresh date</span></div>
       </div>
       <div class="grid g-side section">
@@ -457,14 +552,14 @@
           <div class="card-head"><span class="card-title">Each risk: bad-year loss vs ceiling ${info("ceiling")}</span><span class="xs muted">scale $0–350M</span></div>
           <div class="legend" style="margin-bottom:10px"><span><i style="background:var(--accent)"></i>Reviewed</span><span><i style="background:var(--steel)"></i>Not yet reviewed</span><span><i style="background:var(--danger)"></i>Over ceiling</span><span><i style="background:var(--ink);width:3px"></i>${fm(f.app)} single-risk ceiling</span></div>
           ${rows}
-          <div class="card-foot">Ransomware comes from the live model. The portfolio total is not a simple sum, because bad years rarely all land at once ${info("agg")}. Select a risk for its detail.</div>
+          <div class="card-foot">Only ransomware comes from the live model; the others are early workshop estimates. The portfolio total (${fm(f.agg.p95)}) is an illustrative input: combining risks is not built yet ${info("agg")}. Adding the nine bad years gives ${fm(f.scen.reduce((a, x) => a + x.p95, 0))}, but bad years rarely all land at once. Select a risk for its detail.</div>
         </div>
         <div class="stack">
           <div class="card"><div class="card-head"><span class="card-title">Limits ${info("appetite")}</span></div>${lim}<div class="xs muted">Appetite restated in dollars and ratified by the board risk committee, Q1 2026.</div></div>
           <div class="card"><div class="card-head"><span class="card-title">Where inputs come from ${info("tiers")}</span></div>
             <div class="mix" style="height:14px;margin-bottom:10px"><span style="width:42%"></span><span style="width:37%"></span><span style="width:21%"></span></div>
             <div class="legend"><span><i style="background:var(--ink)"></i>Own records 42%</span><span><i style="background:var(--steel)"></i>Industry data 37%</span><span><i style="background:var(--t3)"></i>Expert judgment 21%</span></div>
-            ${callout("warn", "!", "One judgment-based input drives a key figure", "The ransom-payment likelihood moves the ransomware bad-year figure by over 10%. It is under open challenge.")}
+            ${f.flagT3 ? callout("warn", "!", "One judgment-based input drives a key figure", `The ${f.flagT3.name.toLowerCase()} moves the ransomware bad-year figure by \u00b1${pct(f.flagT3.relHalf, 1)}. It is flagged for calibration.`) : ""}
           </div>
         </div>
       </div>
@@ -509,7 +604,7 @@
     const f = fig();
     const d = f.scen.find(x => x.id === S.param) || f.scen[0];
     const links = D.decisions.filter(x => (d.id === "ransomware" && x.links.includes("RANSOM")) || (d.id === "thirdparty" && x.id === "D-2026-008") || (d.id === "coreconv" && x.id === "D-2026-021"));
-    const runs = d.id === "ransomware" ? [["#0042", "Jul 8, 2026", "Validated"], ["#0041", "Jun 30, 2026", "Submitted"], ["#0040", "Jun 12, 2026", "Superseded"]] : [];
+    const runs = d.id === "ransomware" ? [["#0044", "Jul 10, 2026", "Submitted"], ["#0042", "Jul 8, 2026", "Superseded"], ["#0041", "Jun 30, 2026", "Superseded"]] : [];
     const over = d.p95 > f.app;
     return `<a href="#/scenarios" class="small">← All risk scenarios</a>
       <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:10px 0 4px"><h2 class="serif" style="font-size:28px">${esc(d.name)}</h2>${chip(d.status, true)}</div>
@@ -572,7 +667,7 @@
         <div class="table-wrap"><table class="tbl"><thead><tr><th>Input</th><th>Low / most likely / high</th><th>Tier</th><th>Source</th></tr></thead><tbody>
         ${ins.map(i => `<tr><td class="t-main">${i[1]}</td><td class="nowrap"><span class="mono small muted">${i[2]} /</span> <input class="input-num" type="number" step="${i[5]}" value="${i[4]}" ${i[0] && canRun ? `data-winput="${i[0]}"` : "disabled"} aria-label="${esc(i[1])}"> <span class="mono small muted">/ ${i[3]}</span></td><td>${tier(i[6])}</td><td class="small muted">${i[7]}</td></tr>`).join("")}
         </tbody></table></div>
-        <div style="margin-top:12px">${callout("warn", "!", "Flag: judgment drives a key result", "Ransom-payment likelihood is Tier 3 and materially moves the bad-year figure. Second-line challenge CH-0007 remains open against it.")}</div>`;
+        <div style="margin-top:12px">${(() => { const ft = fig().flagT3; return ft ? callout("warn", "!", "Flag: judgment drives a key result", `${ft.name} is Tier 3 and moves the bad-year figure by \u00b1${pct(ft.relHalf, 1)}. Calibrate it before sealing.`) : ""; })()}</div>`;
     } else {
       const tpl = D.scenarios.find(x => x.id === S.wTemplate) || D.scenarios[0];
       body = `<h3 style="font-size:19px;margin-bottom:6px">Review &amp; run</h3>
@@ -599,12 +694,11 @@
   function liveTop() {
     const R = S.R, f = fig();
     const p95 = R.pcts.p95, nA = oneIn(R.pAny), nO = oneIn(R.pOver);
-    const driver = R.tornado[0];
-    const drvPlain = { "How often an attack succeeds": "how often an attack succeeds", "Customer attrition & revenue": "how many customers leave afterwards", "Business interruption": "how long systems stay down", "Legal, regulatory & fines": "legal and regulatory costs", "Ransom payment": "the size of any ransom paid" }[driver.name] || driver.name.toLowerCase();
+    const drvPlain = S.sens[0].name.toLowerCase();
     const cards = [
       ["Average year", "mean", R.mean, ""], ["Typical year", "P50 (median)", R.pcts.p50, ""], ["1 in 4 years", "P75", R.pcts.p75, ""],
       ["1 in 10 years", "P90", R.pcts.p90, "mid"], ["1 in 20 years", "P95", p95, "hi"], ["1 in 100 years", "P99", R.pcts.p99, ""]
-    ].map(c => `<div class="pct ${c[3]}"><div class="pl">${c[0]}</div><div class="pt">${c[1]}</div><div class="pv">${fm(c[2])}</div></div>`).join("");
+    ].map(c => `<div class="pct ${c[3]}"><div class="pl">${c[0]}</div><div class="pt tech">${c[1]}</div><div class="pv">${fm(c[2])}</div></div>`).join("");
     return `<div class="grid g-side section">
       <div class="card">
         <div class="card-head"><span class="card-title">Loss curve: chance of losing at least $X in a year ${info("lec")}</span></div>
@@ -631,11 +725,11 @@
       <div class="card-foot">Business interruption (time systems are down) is the largest single cost, which is why recovery speed matters so much.</div>`;
   }
   function liveSens() {
-    const R = S.R, mx = Math.max(...R.tornado.map(t => t.swing), 0.001);
-    return `<div class="card-head"><span class="card-title">What moves the answer most ${info("sens")}</span></div>
-      <p class="small muted" style="margin-top:-6px">Each assumption swung from low to high while the others hold still. Longer bar = more influence.</p>
-      ${R.tornado.map(t => `<div class="hbar"><span>${t.name}</span><span class="htrack"><span class="fill-warn" style="width:${(t.swing / mx * 100).toFixed(1)}%"></span></span><span class="hval">±${fm(t.swing / 2)}</span></div>`).join("")}
-      <div class="card-foot">Scrutiny, data-gathering and challenge should concentrate at the top of this list.</div>`;
+    const sv = S.sens, mx = Math.max(...sv.map(t => t.swing), 0.001);
+    return `<div class="card-head"><span class="card-title">What moves the bad year most ${info("sens")}</span></div>
+      <p class="small muted" style="margin-top:-6px">Each assumption swung from a plausible low to high, model re-run each time. Shows the change in the 1-in-20-year loss.</p>
+      ${sv.map(t => `<div class="hbar"><span>${t.name} ${tier(t.tier)}<span class="xs muted tech" style="display:block">${t.loV} \u2192 ${t.hiV}</span></span><span class="htrack"><span class="${t.tier === "T3" && t.relHalf > 0.1 ? "fill-danger" : "fill-warn"}" style="width:${(t.swing / mx * 100).toFixed(1)}%"></span></span><span class="hval">\u00b1${pct(t.relHalf, 1)}</span></div>`).join("")}
+      <div class="card-foot">Red = expert-judgment input moving the bad year by over \u00b110%: flagged for calibration. Scrutiny and data-gathering belong at the top of this list.</div>`;
   }
   function pageResults() {
     const canRun = S.role === "1lod", R = S.R;
@@ -644,7 +738,7 @@
     return `${pageGuide("results")}
       <div class="card section" style="display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;align-items:center">
         <div><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span class="mono xs muted">RANSOM-001</span><b style="font-size:16px">Ransomware: destructive encryption, payments disruption</b>${chip("Validated", false).replace("Validated", "Approved with conditions")}</div>
-          <div class="mono xs muted" style="margin-top:4px" data-live="meta">${simMeta()} ${info("mc")}</div></div>
+          <div class="mono xs muted tech" style="margin-top:4px" data-live="meta">${simMeta()} ${info("mc")}</div></div>
         ${S.role !== "exec" ? `<div class="btn-row"><button type="button" class="btn btn-sm${canRun ? "" : " is-locked"}" data-action="seal">Seal snapshot</button><button type="button" class="btn btn-sm" data-action="toast" data-msg="Sent to the Operational Risk (2LOD) review queue with the sealed snapshot reference.">Send to 2nd line</button><button type="button" class="btn btn-sm btn-dark" data-action="addBoard">Add to board pack</button></div>` : `<a class="btn btn-sm btn-dark" href="#/board">See it in the board report</a>`}
       </div>
       <div data-live="top">${liveTop()}</div>
@@ -654,13 +748,15 @@
           ${sl("lefMl", "How often an attack succeeds", "most likely per year", 0.08, 0.45, 0.01, S.inputs.lefMl, v => (+v).toFixed(2) + "/yr")}
           ${sl("biDaysMl", "How long systems stay down", "most likely days", 3, 20, 0.5, S.inputs.biDaysMl, v => (+v).toFixed(1) + " days")}
           ${sl("ransomMl", "Ransom size, if paid", "most likely $M", 4, 30, 0.5, S.inputs.ransomMl, v => "$" + (+v).toFixed(1) + "M")}
-          ${sl("ctrlEff", "Planned controls: attacks prevented", "reduction in successful attacks", 0, 60, 5, S.inputs.ctrlEff, v => v + "%", "40% ≈ the proposed backup + EDR program")}
+          ${sl("ctrlEff", "Controls that prevent attacks", "reduction in successful attacks", 0, 60, 5, S.inputs.ctrlEff, v => v + "%", "20% \u2248 EDR expansion")}
+          ${sl("outageCut", "Controls that speed recovery", "reduction in outage length", 0, 80, 5, S.inputs.outageCut, v => v + "%", "50% \u2248 immutable backup")}
+          ${sl("ransomProp", "Likelihood a ransom is paid", "expert judgment (Tier 3)", 0.1, 0.6, 0.05, S.inputs.ransomProp, v => Math.round(v * 100) + "%")}
           ${canRun ? '<button type="button" class="btn btn-sm" data-action="resetInputs">Reset to sealed values</button>' : ""}
         </div>
         <div class="card" data-live="mods">${liveMods()}</div>
         <div class="card" data-live="sens">${liveSens()}</div>
       </div>
-      <div class="small muted" data-live="foot">Reproducibility: re-running with the pinned seed reproduces every figure exactly ${info("seed")} · input fingerprint <span class="mono">${R.hash}</span></div>`;
+      <div class="small muted tech" data-live="foot">Reproducibility: re-running with the pinned seed reproduces every figure exactly ${info("seed")} · input fingerprint <span class="mono">${R.hash}</span></div>`;
   }
   const simMeta = () => `seed ${E.DEFAULT_SEED} · ${S.R.iterations.toLocaleString()} simulated years · engine ${E.ENGINE_VERSION} · snapshot ${S.R.snap}`;
 
@@ -674,16 +770,17 @@
   function pageProvenance() {
     const flag = f => f === "OK" ? '<span class="chip tone-ok">Current</span>' : f === "STALE" ? '<span class="chip tone-danger">Overdue</span>' : '<span class="chip tone-warn">Judgment drives result</span>';
     const cnt = t => D.provenance.filter(p => p.tier === t).length;
+    const flagOf = p => { if (p.flag === "STALE") return "STALE"; const sv = p.key && S.sens.find(x => x.key === p.key); return sv && p.tier === "T3" && sv.relHalf > 0.10 ? "T3" : "OK"; };
     return `${pageGuide("provenance")}
       <div class="grid g-auto section">
         <div class="card kpi"><span class="kpi-label">${tier("T1")} Own records</span><span class="kpi-value">${cnt("T1")}</span><span class="kpi-note">strongest evidence</span></div>
         <div class="card kpi"><span class="kpi-label">${tier("T2")} Industry data</span><span class="kpi-value">${cnt("T2")}</span><span class="kpi-note">external consortium & studies</span></div>
         <div class="card kpi"><span class="kpi-label">${tier("T3")} Expert judgment</span><span class="kpi-value">${cnt("T3")}</span><span class="kpi-note">weakest; flagged when material</span></div>
-        <div class="card kpi"><span class="kpi-label">Needs attention</span><span class="kpi-value" style="color:var(--danger)">${D.provenance.filter(p => p.flag !== "OK").length}</span><span class="kpi-note">overdue or judgment-driven</span></div>
+        <div class="card kpi"><span class="kpi-label">Needs attention</span><span class="kpi-value" style="color:var(--danger)">${D.provenance.filter(p => flagOf(p) !== "OK").length}</span><span class="kpi-note">overdue or judgment-driven</span></div>
       </div>
       <div class="card"><div class="table-wrap"><table class="tbl">
         <thead><tr><th>Input</th><th>Scenario</th><th>Value / range</th><th>Tier ${info("tiers")}</th><th>Source</th><th>Owner</th><th>As of</th><th>Status</th></tr></thead>
-        <tbody>${D.provenance.map(p => `<tr><td class="t-main">${esc(p.name)}</td><td class="small">${esc(p.scen)}</td><td class="mono small nowrap">${esc(p.dist)}</td><td>${tier(p.tier)}</td><td class="small">${esc(p.src)}</td><td class="small">${esc(p.owner)}</td><td class="mono small">${p.asOf}</td><td>${flag(p.flag)}</td></tr>`).join("")}</tbody>
+        <tbody>${D.provenance.map(p => `<tr><td class="t-main">${esc(p.name)}</td><td class="small">${esc(p.scen)}</td><td class="mono small nowrap">${esc(p.dist)}</td><td>${tier(p.tier)}</td><td class="small">${esc(p.src)}</td><td class="small">${esc(p.owner)}</td><td class="mono small">${p.asOf}</td><td>${flag(flagOf(p))}</td></tr>`).join("")}</tbody>
       </table></div>
       <div class="card-foot">Flags are automatic, never hand-set: <b>Overdue</b> when past the refresh date; <b>Judgment drives result</b> when a Tier 3 input moves a key figure by over 10%. Every value records its lineage ${info("lineage")}.</div></div>`;
   }
@@ -716,7 +813,7 @@
         <div class="ledger-head"><span class="mono" style="font-weight:700">${c.id}</span><span class="chip tone-${sevTone[c.sev]} plain">${c.sev}</span><span class="small">against <b>${esc(c.target)}</b></span><span style="flex:1"></span>${chip(c.status)}</div>
         <div>${esc(c.text)}</div>
         ${c.resp ? `<div class="ledger-resp"><b>1st line response:</b> ${esc(c.resp)}</div>` : ""}
-        <div class="ledger-meta">#${c.seq} · ${esc(c.ts)} · ${esc(c.author)} · fingerprint ${c.hash} · chained to ${c.prev}</div>
+        <div class="ledger-meta tech">#${c.seq} · ${esc(c.ts)} · ${esc(c.author)} · fingerprint ${c.hash} · chained to ${c.prev}</div>
       </article>`).join("")}`;
   }
 
@@ -726,7 +823,7 @@
     let repro = "";
     if (S.repro === "done") {
       const a = S.sealed, b = S.reproRun, same = a.pcts.p50 === b.pcts.p50 && a.pcts.p95 === b.pcts.p95 && a.mean === b.mean;
-      repro = `<div style="margin-top:12px">${callout(same ? "ok" : "danger", same ? "✓" : "!", same ? "Reproduced exactly" : "Mismatch detected", `Sealed: average ${fm(a.mean)}, bad year ${fm(a.pcts.p95)}. Re-run: average ${fm(b.mean)}, bad year ${fm(b.pcts.p95)}. Seed ${E.DEFAULT_SEED} · 10,000 years · engine ${E.ENGINE_VERSION}.`)}</div>`;
+      repro = `<div style="margin-top:12px">${callout(same ? "ok" : "danger", same ? "✓" : "!", same ? "Reproduced exactly" : "Mismatch detected", `Sealed: average ${fm(a.mean)}, bad year ${fm(a.pcts.p95)}. Re-run: average ${fm(b.mean)}, bad year ${fm(b.pcts.p95)}. Seed ${E.DEFAULT_SEED} · 50,000 years · engine ${E.ENGINE_VERSION}.`)}</div>`;
     }
     return `${pageGuide("validation")}
       <div class="grid g-side">
@@ -744,12 +841,12 @@
             ${D.snapshots.map(s => `<div class="kv"><span class="mono">${s.id} <span class="muted">${s.date}</span></span><span>${chip(s.st)}</span></div>`).join("")}
           </div>
           <div class="card"><div class="card-head"><span class="card-title">Reproducibility check ${info("seed")}</span></div>
-            <p class="small muted" style="margin-top:-6px">Actually re-runs snapshot #0042 with its pinned seed in your browser, then compares every figure with the sealed record.</p>
+            <p class="small muted" style="margin-top:-6px">Actually re-runs snapshot #0044 with its pinned seed in your browser, then compares every figure with the sealed record.</p>
             <button type="button" class="btn ${can ? "btn-primary" : "is-locked"}" data-action="repro">${S.repro === "running" ? "Re-running…" : S.repro === "done" ? "Run again" : "Re-run sealed snapshot"}</button>
             ${repro}
             ${can ? "" : '<p class="xs muted" style="margin-top:8px">Validator tooling. Switch role to “Validator” to run it.</p>'}
           </div>
-          <div class="card small muted">Stability: the bad-year figure varies by under 3% across five different seeds at 10,000 years; 50,000 are used for board-cited figures. Independence: validators only ever see sealed snapshots, never the live workbench.</div>
+          <div class="card"><div class="card-head"><span class="card-title">Stability gate ${info("convergence")}</span></div>${(() => { const c = conv(); return [c.c10, c.c50].map(x => `<div class="kv"><span>${x.iterations.toLocaleString()} simulated years</span><span>${pct(x.spread, 1)} spread ${x.pass ? '<span class="chip tone-ok">passes</span>' : '<span class="chip tone-danger">fails</span>'}</span></div>`).join(""); })()}<p class="xs muted" style="margin-top:8px">Bad-year loss re-run with five different seeds; must vary by under 3% to be sealed. Board figures therefore use 50,000 years. Validators only ever see sealed snapshots, never the live workbench.</p></div>
         </div>
       </div>`;
   }
@@ -801,7 +898,7 @@
     let prev = -100;
     const markHTML = marks.map(m => { const p = pc(m[1]); const up = p - prev < 12; prev = p; return `<span class="tower-mark" style="left:${p}%;background:${m[2]}"></span><span class="tower-mlabel" style="left:${Math.min(Math.max(p, 6), 94)}%;color:${m[2]};top:${up ? "-16px" : "0"}">${m[0]} ${fm(m[1])}</span>`; }).join("");
     const ticks = []; const step = scaleH > 320 ? 100 : 50; for (let v = 0; v <= scaleH; v += step) ticks.push(`<span style="left:${pc(v)}%">${v ? "$" + v + "M" : "$0"}</span>`);
-    const mx = Math.max(...D.roi.map(r => r.roi));
+    const mx = Math.max(...S.roi.map(r => r.roi));
     return `${pageGuide("insurance")}
       <div class="card section">
         <div class="card-head"><span class="card-title">Does insurance cover a bad ransomware year? ${info("tower")}</span></div>
@@ -820,10 +917,10 @@
       </div>
       <div class="card">
         <div class="card-head"><span class="card-title">Which controls buy the most risk reduction? ${info("roi")}</span></div>
-        <p class="small muted" style="margin-top:-6px">Avoided loss per year from side-by-side model runs (with vs. without the control), against cost. Above 1.0× the control pays for itself.</p>
-        <div class="table-wrap"><table class="tbl"><thead><tr><th>Initiative</th><th class="num">Cost</th><th class="num">Avoided loss / yr</th><th>Return</th><th class="num">Payback</th><th>Status</th></tr></thead>
-          <tbody>${D.roi.map(r => `<tr><td><div class="t-main">${r.name}</div><div class="t-sub">${r.why}</div></td><td class="num">$${r.cost.toFixed(1)}M</td><td class="num" style="color:var(--ok)">−$${r.dale.toFixed(1)}M</td><td><span class="roi-bar"><span class="b${r.roi < 1 ? " low" : ""}" style="width:${(r.roi / mx * 90).toFixed(0)}px"></span><b class="mono">${r.roi.toFixed(1)}×</b></span></td><td class="num">${r.pay}</td><td>${chip(r.st)}</td></tr>`).join("")}</tbody></table></div>
-        <div style="margin-top:14px">${callout("accent", "→", "Reading this table", "Immutable backup returns about $3.90 of avoided loss per dollar because it shortens outages, and business interruption is the largest ransomware cost. Fund it before the branch EDR tranche, which does not pay back (0.6×).")}</div>
+        <p class="small muted" style="margin-top:-6px">Computed live: the model is run with and without each control. Return = avoided loss per year \u00f7 annual cost (3-year cost \u00f7 3); above 1.0\u00d7 it pays for itself. Each control\u2019s effect is an expert-judgment assumption, shown under its name.</p>
+        <div class="table-wrap"><table class="tbl"><thead><tr><th>Initiative</th><th class="num">3-yr cost</th><th class="num">Avoided loss / yr</th><th class="num">Cut to bad year</th><th>Return</th><th class="num">Payback</th><th>Status</th></tr></thead>
+          <tbody>${S.roi.map(r => `<tr><td><div class="t-main">${r.name}</div><div class="t-sub">${r.why}</div><div class="xs" style="margin-top:3px">${tier("T3")} <span class="muted">assumed effect: ${r.effectTxt}</span></div></td><td class="num">$${r.cost.toFixed(1)}M</td><td class="num" style="color:var(--ok)">\u2212${fm(r.dale)}</td><td class="num">${r.dP95 == null ? "\u2014" : "\u2212" + fm(Math.max(0, r.dP95))}</td><td><span class="roi-bar"><span class="b${r.roi < 1 ? " low" : ""}" style="width:${(Math.max(r.roi, 0.05) / mx * 80).toFixed(0)}px"></span><b class="mono">${r.roi.toFixed(1)}\u00d7</b></span></td><td class="num">${isFinite(r.pay) ? r.pay.toFixed(1) + " yr" : "never"}</td><td>${chip(r.st)}</td></tr>`).join("")}</tbody></table></div>
+        <div style="margin-top:14px">${callout("accent", "\u2192", "Reading this table", `Two different questions, two different winners. ${f.bestRoi.name} gives the best return on the average year (${f.bestRoi.roi.toFixed(1)}\u00d7). ${f.bestTail.name} cuts the bad year most (\u2212${fm(f.bestTail.dP95)}), because it shortens outages, which dominate severe years. For the insurance decision, the bad-year cut is what counts. The branch EDR tranche (${f.branch.roi.toFixed(1)}\u00d7) does not pay back.`)}</div>
       </div>`;
   }
 
@@ -854,13 +951,13 @@
             <ul><li>A bad (1-in-20) year across all risks is modeled at <b>${fm(f.agg.p95)}</b> against a ${fm(f.agg.appetite)} appetite.</li>
             <li>A bad ransomware year (<b>${fm(f.p95)}</b>) exceeds the $${D.tower}M insurance tower${f.gapHas ? ` by <b>${fm(f.gap)}</b>; this prices the renewal decision` : ""}.</li>
             <li>One high-severity independent challenge remains open on a judgment-based ransomware input.</li>
-            <li>Recommended now: fund immutable backup &amp; recovery automation ($8.4M, 3.9× return) and settle the insurance renewal explicitly.</li></ul></section>` : ""}
+            <li>Recommended now: fund immutable backup &amp; recovery automation ($8.4M), which cuts the bad ransomware year by ${fm(f.bk.dP95)}, and settle the insurance renewal explicitly.</li><li>The portfolio total is an illustrative input; only ransomware is fully simulated today.</li></ul></section>` : ""}
           ${b.appetite ? `<section><h3>Exposure vs appetite</h3><table class="tbl"><thead><tr><th>Measure</th><th class="num">Modeled</th><th class="num">Limit</th><th>Status</th></tr></thead><tbody>${rowsA}</tbody></table></section>` : ""}
           ${b.deep ? `<section><h3>Ransomware: chance of losing at least $X in a year</h3><div class="chart-wrap">${lecSVG(f.R, {})}</div><p class="xs muted">Snapshot ${esc(S.R.snap)} · seed ${E.DEFAULT_SEED} · ${S.R.iterations.toLocaleString()} simulated years · reproducible on demand. A ${pct(f.R.pAny)} chance of a loss-causing attack in any year; average cost ${fm(f.R.mean)} a year.</p></section>` : ""}
           ${b.insurance ? `<section><h3>Insurance adequacy</h3><p>The current tower pays up to <b>$${D.tower}M</b>. A bad ransomware year of <b>${fm(f.p95)}</b> leaves <b>${fm(f.gap)}</b> uninsured. Options for renewal D-2026-014: buy roughly ${fm(Math.ceil(f.gap / 5) * 5)} of additional cover, fund controls that reduce the loss to about ${fm(f.P.pcts.p95)}, or accept the gap by explicit decision.</p></section>` : ""}
-          ${b.model ? `<section><h3>Can we rely on these numbers?</h3><p>Tier 2 model, conditionally approved by independent Model Risk Management. Seven challenges filed in twelve months, six closed. First annual back-test completes Q2 2027. Limitations are disclosed in the validation package with compensating controls. 21% of inputs rest on expert judgment; three inputs are overdue for refresh.</p></section>` : ""}
+          ${b.model ? `<section><h3>Can we rely on these numbers?</h3><p>Tier 2 model, conditionally approved by independent Model Risk Management. Seven challenges filed in twelve months, six closed. First annual back-test completes Q2 2027. A July 2026 methodology review corrected the sensitivity method, run size and control-return calculation. Limitations are disclosed in the validation package with compensating controls. 21% of inputs rest on expert judgment; three inputs are overdue for refresh.</p></section>` : ""}
           ${b.recs ? `<section><h3>Recommended actions</h3><table class="tbl"><tbody>${recsRows(f).map(r => `<tr><td class="mono" style="color:var(--accent);font-weight:700;width:36px">${r.n}</td><td><b>${r.title}</b><div class="small muted">${r.why}</div></td><td class="num small">${r.eff}</td></tr>`).join("")}</tbody></table></section>` : ""}
-          ${b.asks ? `<section><h3>Asks of the committee</h3><ol><li><b>Approve</b> immutable backup &amp; recovery automation: $8.4M, the best risk-reduction return in the portfolio (3.9×).</li><li><b>Decide</b> the insurance renewal limit explicitly (D-2026-014), choosing between more cover, loss reduction, or accepting the ${fm(f.gap)} gap.</li><li><b>Require</b> a validated analysis before the core conversion go/no-go (D-2026-021).</li><li><b>Note</b> the open challenge on the ransom-payment assumption and its resolution path.</li></ol></section>` : ""}
+          ${b.asks ? `<section><h3>Asks of the committee</h3><ol><li><b>Approve</b> immutable backup &amp; recovery automation ($8.4M): the largest modeled cut to a bad ransomware year (\u2212${fm(f.bk.dP95)}); with EDR it brings a bad year to ${fm(f.P.pcts.p95)}.</li><li><b>Decide</b> the insurance renewal limit explicitly (D-2026-014), choosing between more cover, loss reduction, or accepting the ${fm(f.gap)} gap.</li><li><b>Require</b> a validated analysis before the core conversion go/no-go (D-2026-021).</li><li><b>Note</b> the open challenge on the ransom-payment assumption and its resolution path.</li></ol></section>` : ""}
           ${Object.values(b).some(Boolean) ? "" : '<p class="muted">All sections are switched off. Tick a section on the left to include it.</p>'}
         </article>
       </div>`;
@@ -920,7 +1017,7 @@
   /* ================= render ================= */
   const PAGES = { briefing: pageBriefing, dashboard: pageDashboard, scenarios: pageScenarios, detail: pageDetail, wizard: pageWizard, results: pageResults,
     provenance: pageProvenance, decisions: pageDecisions, challenges: pageChallenges, validation: pageValidation, materiality: pageMateriality,
-    insurance: pageInsurance, board: pageBoard, integrations: pageIntegrations, guide: pageGuideRoles, glossary: pageGlossary };
+    insurance: pageInsurance, board: pageBoard, integrations: pageIntegrations, guide: pageGuideRoles, glossary: pageGlossary, methodology: pageMethodology };
 
   function render(opts) {
     opts = opts || {};
@@ -972,6 +1069,7 @@
 
   const actions = {
     role: el => setRole(el.dataset.role),
+    simple: el => { const v = el.dataset.v === "1"; if (v === S.simple) return; S.simple = v; store.set("simple", v); render({ keepScroll: true }); toast(v ? "Simple view: technical labels hidden, menu shortened." : "Detailed view: model IDs, seeds and technical labels shown."); },
     enterExec: () => { if (S.role !== "exec") { S.role = "exec"; store.set("role", "exec"); } },
     toggleNav: () => { S.navOpen = !S.navOpen; render({ keepScroll: true }); },
     closeNav: () => { S.navOpen = false; render({ keepScroll: true }); },
@@ -981,7 +1079,7 @@
     seal: () => S.role === "1lod" ? toast("Snapshot sealed: inputs, seed, engine version and results written permanently. Validators can reproduce it at any time.") : toast("Only the 1st line can seal snapshots. Switch role to try it."),
     addBoard: () => toast("Added to the Q2 board pack from snapshot " + S.R.snap + ". The pack cites sealed runs only."),
     rerun: () => { if (S.role !== "1lod") return toast("Only the 1st line can run the model. Switch role to try it."); S.wStep = 4; location.hash = "#/wizard"; },
-    resetInputs: () => { S.inputs = Object.assign({}, E.DEFAULT_INPUTS); compute(); render({ keepScroll: true }); toast("Assumptions reset to the sealed values of snapshot #0042."); },
+    resetInputs: () => { S.inputs = Object.assign({}, E.DEFAULT_INPUTS); compute(); render({ keepScroll: true }); toast("Assumptions reset to the sealed values of snapshot #0044."); },
     wDecision: el => { S.wDecision = el.dataset.id; render({ keepScroll: true }); },
     wTemplate: el => { S.wTemplate = el.dataset.id; render({ keepScroll: true }); },
     wNext: () => { S.wStep = Math.min(4, S.wStep + 1); render({ keepScroll: true }); },
@@ -1013,7 +1111,7 @@
       if (S.role !== "mrm") return toast("Reproducibility checks are validator tooling. Switch role to “Validator”.");
       if (S.repro === "running") return;
       S.repro = "running"; render({ keepScroll: true });
-      setTimeout(() => { S.reproRun = E.run(E.DEFAULT_INPUTS, { iterations: 10000, appetite: 250 }); S.repro = "done"; render({ keepScroll: true }); }, 350);
+      setTimeout(() => { S.reproRun = E.run(E.DEFAULT_INPUTS, { appetite: 250 }); S.repro = "done"; render({ keepScroll: true }); }, 350);
     }
   };
 
@@ -1048,7 +1146,7 @@
   });
 
   let simTimer;
-  const SL_FMT = { lefMl: v => (+v).toFixed(2) + "/yr", biDaysMl: v => (+v).toFixed(1) + " days", ransomMl: v => "$" + (+v).toFixed(1) + "M", ctrlEff: v => v + "%" };
+  const SL_FMT = { lefMl: v => (+v).toFixed(2) + "/yr", biDaysMl: v => (+v).toFixed(1) + " days", ransomMl: v => "$" + (+v).toFixed(1) + "M", ctrlEff: v => v + "%", outageCut: v => v + "%", ransomProp: v => Math.round(v * 100) + "%" };
   document.addEventListener("input", e => {
     const t = e.target;
     if (t.dataset.slider) {

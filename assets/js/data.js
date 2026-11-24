@@ -11,7 +11,9 @@
   D.asOf = "Jul 10, 2026";
   D.tower = 120;            // insurance tower top, $M
   D.aggregate = { p95: 612, appetite: 650, mean: 68, meanCap: 90 };
-  D.programCtrlEff = 40;    // assumed frequency cut from funded backup + EDR program (T3 assumption)
+  D.program = { ctrlEff: 20, outageCut: 50 }; // backup + EDR program: EDR cuts successful attacks 20%, backup halves outage (both T3 assumptions)
+  D.portfolioIllustrative = true; // aggregate P95 is an input, not model output (no cross-scenario aggregation yet)
+  D.reviewUrl = "https://github.com/WowItWorked/Cyber-Tech-Risk-Quantification/blob/main/docs/METHODOLOGY_REVIEW.md";
 
   /* ---------- roles ---------- */
   D.roles = {
@@ -66,6 +68,7 @@
     ]},
     { label: "Help", items: [
       ["guide", "How to use this", "Guide by role", "M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2zM22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z", EXEC_OK],
+      ["methodology", "Methodology review", "Can the maths be trusted?", "M9 3h6M10 3v6L4 19a1.5 1.5 0 0 0 1.3 2h13.4a1.5 1.5 0 0 0 1.3-2L14 9V3M7 15h10", EXEC_OK],
       ["glossary", "Glossary", "Every term in plain English", "M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5zM4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5", EXEC_OK]
     ]}
   ];
@@ -75,7 +78,7 @@
     wizard: "New analysis", results: "Ransomware deep-dive", provenance: "Data sources", decisions: "Decisions",
     challenges: "Challenge ledger", validation: "Model validation", materiality: "Incident disclosure (8-K)",
     insurance: "Insurance & investments", board: "Board report", integrations: "Data connections",
-    guide: "How to use this platform", glossary: "Glossary"
+    guide: "How to use this platform", glossary: "Glossary", methodology: "Methodology review"
   };
 
   /* ---------- page guides: what it shows / how to read it / what to decide ---------- */
@@ -150,6 +153,11 @@
       read: ["“Connected · sim” works today on simulated data. “Planned” connections are designed but not yet built."],
       decide: ["Sequencing of data investments. Better data narrows the ranges and firms up the numbers."]
     },
+    methodology: {
+      what: "What the model does well, where it falls short of accepted standards, and what has been fixed. Read this before relying on a figure for a material decision.",
+      read: ["Each finding has a status: fixed, disclosed (a known limit), or open (needs work or data).", "The full technical review, with the tests behind every number, is linked at the bottom."],
+      decide: ["How much weight each figure can bear, and which limitations to note when citing it."]
+    },
     guide: {
       what: "How each role uses the platform, step by step.",
       read: ["Pick your role below. Use “Switch to this view” to see the platform the way that role does."],
@@ -181,10 +189,12 @@
     materiality: { t: "Four-day disclosure clock (8-K)", w: "After a significant cyber incident, SEC rules give four business days, from the point it is judged material, to disclose it on Form 8-K. The loss estimate builds from ten pre-agreed cost categories against a threshold the board already ratified.", y: "The determination becomes a checklist run under a clock, not a debate started from scratch mid-crisis." },
     tower: { t: "Insurance tower and uninsured tail", w: "Cyber insurance stacks in layers: the bank’s own retention first, then primary and excess layers, up to a top (today $120M). Loss beyond the top in a severe year is the uninsured tail.", y: "The tail is the renewal decision in one number: buy more cover, restructure the layers, or knowingly hold the risk." },
     roi: { t: "Control ROI (ΔALE)", w: "The model runs side-by-side simulations with and without a proposed control. The drop in average annual loss is the control’s risk return, set against its annual cost.", y: "Security spending gets ranked like any other investment: reduction per dollar and payback in years, not adjectives." },
-    sens: { t: "Sensitivity (what moves the answer)", w: "Each assumption is swung across its plausible range while the others hold still. The longer the bar, the more that assumption drives the result.", y: "Attention, data-gathering and challenge concentrate on the few assumptions that matter." },
+    sens: { t: "Sensitivity (what moves the answer)", w: "Each assumption is swung from a plausible low to a plausible high while the others hold still, and the model is re-run each time. The bar shows how far the 1-in-20-year loss moves. Over \u00b110% from an expert-judgment input is flagged as material.", y: "Attention, data-gathering and challenge concentrate on the few assumptions that matter." },
     prov: { t: "Provenance", w: "Where a number came from: its source, owner, as-of date and evidence tier. Overdue values flag as stale automatically.", y: "“Where did this number come from?” is the first question from any board member or examiner. This is the standing answer." },
     decisions: { t: "No decision, no analysis", w: "Every analysis must name the decision it informs (forum, owner and date) before it can be created. Outcomes are recorded after each forum meets.", y: "It keeps the work pointed at real choices. Analysis nobody acts on is a well-known failure of risk quantification programs." },
     agg: { t: "Adding risks together", w: "A severe year for the whole portfolio is not the sum of every scenario’s worst case, because bad years do not all land at once. The aggregate models how risks move together.", y: "Simple addition would overstate the total and hide headroom that really exists." },
+    convergence: { t: "Convergence (is the run big enough?)", w: "The same model is re-run with five different random seeds. If the 1-in-20-year loss moves by less than 3% between them, the run is big enough to trust. Smaller runs are noisier.", y: "It separates real changes in risk from random noise in the simulation. Runs that fail this test cannot be sealed." },
+    review: { t: "Methodology review", w: "An evaluation of the model\u2019s mathematics and assumptions against accepted standards (Open FAIR, model risk guidance, actuarial practice), with findings and fixes.", y: "It tells you which figures are model output you can lean on, and which are still assumptions or illustrative inputs." },
     lineage: { t: "Data lineage (BCBS 239)", w: "Every value pulled from another system carries its source, transformation and timestamp, following the banking data standard BCBS 239.", y: "A number is only as defensible as its pipeline. Lineage makes the pipeline inspectable." },
     lod1: { t: "1LOD / 2LOD", w: "Shorthand for first line of defense (the business and technology teams who own and manage risk) and second line of defense (the independent risk function that oversees and challenges them).", y: "It tells you who produced a number and who checked it." },
     confidence: { t: "Confidence in the numbers", w: "A plain read of how much weight the figures can bear, based on validation status, evidence tiers, stale inputs and open challenges.", y: "A precise-looking number on weak evidence is more dangerous than a rough one on strong evidence. Confidence tells you which you are looking at." }
@@ -237,8 +247,8 @@
 
   /* ---------- challenges ---------- */
   D.challenges = [
-    { seq: 7, id: "CH-0007", ts: "2026-07-06 14:22 UTC", author: "Operational Risk (2LOD)", target: "Ransom payment propensity (T3)", sev: "High", status: "Open",
-      text: "The 35% payment propensity rests on a single external survey and a calibration workshop. It moves P95 by more than 10%. Require: corroborating consortium evidence or a sensitivity-bounded disclosure in the board pack.", resp: "", hash: "9c41d7aa", prev: "e2b80f13" },
+    { seq: 7, id: "CH-0007", ts: "2026-07-06 14:22 UTC", author: "Operational Risk (2LOD)", target: "Ransom payment propensity (T3)", sev: "High", status: "Responded",
+      text: "The 35% payment propensity rests on a single external survey and a calibration workshop. It moves P95 by more than 10%. Require: corroborating consortium evidence or a sensitivity-bounded disclosure in the board pack.", resp: "Re-tested with paired engine runs on P95 (engine v0.10.0): moving propensity from 20% to 50% shifts P95 by about \u00b12.5%, below the 10% materiality test. The original \u2018>10%\u2019 figure came from a sensitivity method that measured the average year, not P95; that method has been replaced. Range disclosed in the board pack. Propose closure; the severity multiplier (T3, \u00b110.6%) is now the flagged input.", hash: "9c41d7aa", prev: "e2b80f13" },
     { seq: 6, id: "CH-0006", ts: "2026-06-18 09:05 UTC", author: "Operational Risk (2LOD)", target: "Business interruption daily rate", sev: "Medium", status: "Responded",
       text: "Daily outage cost of $2.2M cites FY25 GL actuals but excludes interchange make-whole payments booked under a different cost center.", resp: "Accepted. Rate rebuilt from the reconciled GL mapping; interchange included. Delta +$0.3M/day, snapshot #0041 supersedes #0040.", hash: "e2b80f13", prev: "51c9aa02" },
     { seq: 5, id: "CH-0005", ts: "2026-05-29 16:40 UTC", author: "Operational Risk (2LOD)", target: "Loss event frequency basis", sev: "Medium", status: "Closed",
@@ -249,12 +259,12 @@
   D.provenance = [
     { name: "Loss event frequency: sector base rate", scen: "Ransomware", dist: "PERT(0.08, 0.22, 0.55)", tier: "T2", src: "Loss consortium, financial sector", owner: "Technology Risk", asOf: "2026-05", flag: "OK" },
     { name: "Daily outage cost: payments", scen: "Ransomware", dist: "$2.2M /day", tier: "T1", src: "Finance GL actuals FY25, reconciled", owner: "Finance", asOf: "2026-06", flag: "OK" },
-    { name: "Ransom payment propensity", scen: "Ransomware", dist: "Bernoulli(0.35)", tier: "T3", src: "Calibrated workshop W-12 + survey", owner: "Technology Risk", asOf: "2026-04", flag: "T3" },
+    { name: "Ransom payment propensity", key: "ransomProp", scen: "Ransomware", dist: "Bernoulli(0.35)", tier: "T3", src: "Calibrated workshop W-12 + survey", owner: "Technology Risk", asOf: "2026-04", flag: "OK" },
     { name: "Ransom demand size", scen: "Ransomware", dist: "PERT(4, 9.5, 60)", tier: "T2", src: "External ransom payment dataset", owner: "Technology Risk", asOf: "2026-05", flag: "OK" },
     { name: "Recovery duration", scen: "Ransomware", dist: "PERT(2, 8, 45) days", tier: "T1", src: "Resilience tests + BIA RTOs", owner: "Resilience", asOf: "2026-06", flag: "OK" },
     { name: "Customer attrition post-incident", scen: "Ransomware", dist: "PERT(1, 7, 120)", tier: "T2", src: "Industry attrition studies", owner: "Retail Banking", asOf: "2025-11", flag: "STALE" },
     { name: "Legal & regulatory range", scen: "Ransomware", dist: "PERT(0.5, 6, 80)", tier: "T2", src: "Enforcement action database", owner: "Legal", asOf: "2026-03", flag: "OK" },
-    { name: "Severity common shock", scen: "All scenarios", dist: "PERT(0.7, 1.0, 2.2)", tier: "T3", src: "Calibrated workshop W-14", owner: "Technology Risk", asOf: "2026-04", flag: "OK" },
+    { name: "Severity common shock", key: "sevMax", scen: "All scenarios", dist: "PERT(0.7, 1.0, 2.2)", tier: "T3", src: "Calibrated workshop W-14", owner: "Technology Risk", asOf: "2026-04", flag: "OK" },
     { name: "Processor dependency map", scen: "Processor outage", dist: "Asset graph", tier: "T1", src: "TPRM inventory + BIA", owner: "Third-Party Risk", asOf: "2026-06", flag: "OK" },
     { name: "Records at risk: customer PII", scen: "Customer data theft", dist: "62M records", tier: "T1", src: "Data inventory, system of record", owner: "Data Office", asOf: "2026-05", flag: "OK" },
     { name: "Per-record notification cost", scen: "Customer data theft", dist: "PERT($1.4, $2.1, $4.8)", tier: "T2", src: "External breach cost studies", owner: "Technology Risk", asOf: "2025-10", flag: "STALE" },
@@ -274,12 +284,13 @@
   ];
 
   /* ---------- control investments ---------- */
+  /* Control effects are T3 assumptions fed to the engine; avoided loss and ROI are computed live (paired runs). */
   D.roi = [
-    { name: "Immutable backup + recovery automation", cost: 8.4, dale: 10.9, roi: 3.9, pay: "0.8 yr", st: "Proposed", why: "Shortens outages. Business interruption is the largest single ransomware cost." },
-    { name: "EDR expansion: acquired estate", cost: 6.2, dale: 4.1, roi: 2.0, pay: "1.5 yr", st: "Funded", why: "Stops more attacks before they spread." },
-    { name: "Privileged access hardening", cost: 3.1, dale: 1.8, roi: 1.7, pay: "1.7 yr", st: "Funded", why: "Limits what a stolen admin account can do." },
-    { name: "Payment fraud analytics uplift", cost: 2.4, dale: 1.1, roi: 1.4, pay: "2.2 yr", st: "Proposed", why: "Catches fraudulent payments earlier." },
-    { name: "Third EDR tranche: branch estate", cost: 4.8, dale: 0.9, roi: 0.6, pay: "5.3 yr", st: "Proposed", why: "Low residual exposure in branches; does not pay back." }
+    { name: "Immutable backup + recovery automation", short: "immutable backup & recovery automation", cost: 8.4, effect: { outageCut: 50 }, effectTxt: "halves outage & restoration", st: "Proposed", why: "Shortens recovery. Biggest cut to the bad-year loss, which drives the insurance decision." },
+    { name: "EDR expansion: acquired estate", short: "the EDR expansion to the acquired estate", cost: 6.2, effect: { ctrlEff: 20 }, effectTxt: "20% fewer successful attacks", st: "Funded", why: "Stops more attacks before they spread." },
+    { name: "Privileged access hardening", short: "privileged access hardening", cost: 3.1, effect: { ctrlEff: 8 }, effectTxt: "8% fewer successful attacks", st: "Funded", why: "Limits what a stolen admin account can do." },
+    { name: "Third EDR tranche: branch estate", short: "the branch EDR tranche", cost: 4.8, effect: { ctrlEff: 3 }, effectTxt: "3% fewer successful attacks", st: "Proposed", why: "Little residual exposure in branches." },
+    { name: "Payment fraud analytics uplift", short: "payment fraud analytics", cost: 2.4, staticDale: 1.1, effectTxt: "email-fraud scenario, not live", st: "Proposed", why: "Catches fraudulent payments earlier. Estimated in the email-fraud scenario intake; not in the live model." }
   ];
 
   /* ---------- materiality tabletop ---------- */
@@ -307,26 +318,30 @@
   D.valSecs = [
     { name: "Methodology & model theory", state: "Complete", note: "FAIR decomposition, distribution rationale" },
     { name: "Assumption & provenance register", state: "Complete", note: "generated from the live register" },
-    { name: "Sensitivity & convergence analysis", state: "Complete", note: "re-seed stability, sensitivity, stress points" },
+    { name: "Sensitivity & convergence analysis", state: "Complete", note: "rebuilt in review: P95 paired runs; 50k-year runs pass re-seed gate" },
     { name: "Back-testing framework", state: "Partial", note: "first annual cycle completes Q2 2027" },
     { name: "Limitations & compensating controls", state: "Complete", note: "disclosed below, visible to the board" },
     { name: "Change & version log", state: "Complete", note: "every run sealed with seed + hash" }
   ];
   D.limitations = [
-    ["Frequency leans on industry data until our own history matures.", "Compensating control: annual back-test, quarterly refresh."],
-    ["Combining scenarios uses a fixed correlation assumption.", "How risks move together is judgment-set until Phase 2 calibration."],
-    ["Severity uses a single common shock across cost categories.", "Category-level correlation is not yet differentiated."],
+    ["Portfolio total is an illustrative input, not model output.", "Only ransomware is simulated. The $612M aggregate awaits Phase 2 cross-scenario aggregation."],
+    ["Loss ranges have hard upper limits (Beta-PERT).", "Real cyber losses are heavy-tailed; the 1-in-100-year figure is likely understated. A lognormal / Pareto tail is proposed."],
+    ["Secondary losses apply to every event.", "Open FAIR conditions attrition, legal and notification costs on a secondary-loss probability; omitting it overstates those costs."],
+    ["Control effects are expert judgment (Tier 3).", "Avoided-loss and ROI figures are computed by the model but inherit these assumptions; shown with each control."],
+    ["Severity uses a single common shock across cost categories.", "Its maximum is the most influential judgment input (\u00b110.6% on the bad-year loss) and is flagged for calibration."],
     ["Outputs inform decisions; they do not set regulatory capital.", "Basel operational-risk reconciliation is out of scope this phase."]
   ];
   D.snapshots = [
-    { id: "#0042", date: "Jul 8, 2026", hash: "7f3a91c2", st: "Validated" },
+    { id: "#0044", date: "Jul 10, 2026", hash: "963fcc01", st: "Submitted" },
+    { id: "#0042", date: "Jul 8, 2026", hash: "7f3a91c2", st: "Superseded" },
     { id: "#0041", date: "Jun 30, 2026", hash: "b04ce1d9", st: "Submitted" },
     { id: "#0040", date: "Jun 12, 2026", hash: "e77a02f4", st: "Superseded" }
   ];
 
   D.activity = [
-    { t: "Jul 09", tag: "Challenge", tone: "warn", txt: "Challenge CH-0007 remains open: a judgment-based input (ransom payment likelihood) drives the bad-year figure." },
-    { t: "Jul 08", tag: "Sealed", tone: "info", txt: "Snapshot #0042 sealed. Seed and inputs pinned so it can be reproduced exactly." },
+    { t: "Jul 10", tag: "Review", tone: "info", txt: "Methodology review: sensitivity re-run on the bad-year figure, 50,000-year runs adopted, control returns now computed by the model." },
+    { t: "Jul 10", tag: "Challenge", tone: "warn", txt: "CH-0007 answered: ransom-payment likelihood moves the bad-year figure by only \u00b12.5%. The severity multiplier (\u00b110.6%) is now flagged instead." },
+    { t: "Jul 10", tag: "Sealed", tone: "info", txt: "Snapshot #0044 sealed on engine v0.10.0, superseding #0042. Seed and inputs pinned so it can be reproduced exactly." },
     { t: "Jul 05", tag: "Validation", tone: "info", txt: "Validation package v0.9 accepted with conditions; back-testing still partial." },
     { t: "Jul 02", tag: "Data", tone: "danger", txt: "Three inputs passed their refresh date: customer attrition, notification cost, conversion defect rate." },
     { t: "Jun 30", tag: "Decision", tone: "ok", txt: "D-2026-008 payments resilience tranche approved, informed by the processor-outage analysis." }
